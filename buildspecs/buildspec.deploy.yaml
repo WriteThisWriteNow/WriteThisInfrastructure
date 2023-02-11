@@ -1,0 +1,9 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - chmod +x scripts/deploy-stacks.sh
+  build:
+    commands:
+      - ./scripts/deploy-stacks.sh -s -a ${AccountType}
