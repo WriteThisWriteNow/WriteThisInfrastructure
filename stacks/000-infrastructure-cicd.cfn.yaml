@@ -1,0 +1,287 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Stack to deploy infrastructure with CodePipeline and CodeBuilds
+
+Parameters:
+  AccountType:
+    Description: The type of the account.
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+  ProjectName:
+    Type: String
+    Description: Infrastructure project name
+    Default: infrastructure
+  RepositoryName:
+    Type: String
+    Description: GitHub repository
+    Default: WriteThisInfrastructure
+
+Mappings:
+  BranchMap:
+    prod:
+      Branch: main
+    dev:
+      Branch: development
+
+Resources:
+########  CODEPIPELINE  ########
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub ${AccountType}-${ProjectName}-deploy
+      ArtifactStore:
+        Type: S3
+        Location: !Ref CodePipelineBucket
+      RestartExecutionOnUpdate: true
+      RoleArn: !GetAtt DeployCodePipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              InputArtifacts: [ ]
+              Namespace: "SourceVariables"
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: "1"
+                Provider: GitHub
+              OutputArtifacts:
+                - Name: SourceCode
+              Configuration:
+                Owner: "WriteThisWriteNow"
+                Branch: !FindInMap [ BranchMap, !Ref AccountType, Branch ]
+                Repo: !Sub ${RepositoryName}
+                OAuthToken: "{{resolve:secretsmanager:github/access/token:SecretString}}"
+                PollForSourceChanges: true
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: Stacks
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: SourceCode
+              Configuration:
+                ProjectName: !Ref InfrastructureDeployCodeBuildProject
+              RunOrder: 1
+      Tags:
+        - Key: AccountType
+          Value: !Ref AccountType
+
+########  CODEBUILD  ########
+  InfrastructureDeployCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AccountType}-${ProjectName}-templates-deploy-project
+      Description: !Sub "${ProjectName} templates deploy CodeBuild project for CodePipeline (${AccountType})"
+      QueuedTimeoutInMinutes: 5
+      TimeoutInMinutes: 10
+      ConcurrentBuildLimit: 1
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+        EnvironmentVariables:
+          - Name: AccountType
+            Type: PLAINTEXT
+            Value: !Ref AccountType
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspecs/buildspec.deploy.yaml
+      ServiceRole: !Ref DeployCodeBuildRole
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Ref CodeBuildLogGroup
+          Status: ENABLED
+
+########  S3  ########
+  CodePipelineBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub ${AccountType}-${ProjectName}-cicd-${AWS::AccountId}
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: Remove incomplete multipart uploads
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            Status: Enabled
+          - Id: Remove old packages
+            ExpirationInDays: 5
+            Status: Enabled
+            Prefix: !Sub codepipeline/${ProjectName}
+          - Id: !Sub Remove old ${ProjectName} deploy packages
+            ExpirationInDays: 5
+            Status: Enabled
+            Prefix: !Sub codebuild/${ProjectName}/
+          - Id: Remove old versions
+            NoncurrentVersionExpirationInDays: 5
+            Status: Enabled
+      Tags:
+        - Key: env
+          Value: !Ref AccountType
+
+########  LOGS  ########
+  CodeBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RetentionInDays: 7
+      LogGroupName: !Sub "/${AccountType}/codebuild/${ProjectName}"
+
+########  ROLES  ########
+  DeployCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AccountType}-${ProjectName}-cfn-deploy-codebuild
+      Description: !Sub "${ProjectName} service Role for the templates deploy CodeBuild project (${AccountType})"
+      ManagedPolicyArns:
+        - !Ref S3Policy
+        - !Ref LogsPolicy
+        - !Ref IamPolicy
+        - !Ref CloudFormationPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+      Tags:
+        - Key: env
+          Value: !Ref AccountType
+
+  DeployCodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AccountType}-${ProjectName}-codepipeline-deploy
+      ManagedPolicyArns:
+        - !Ref S3Policy
+        - !Ref CodeBuildPolicy
+        - !Ref IamPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+      Tags:
+        - Key: env
+          Value: !Ref AccountType
+
+########  POLICIES  ########
+  CodeBuildPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-codebuild"
+      Description: !Sub "Access to ${ProjectName}'s CodeBuild projects (${AccountType})"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: "CodeBuildAccess"
+            Action:
+              - codebuild:StartBuild
+              - codebuild:BatchGetBuilds
+            Effect: Allow
+            Resource:
+              - !GetAtt InfrastructureDeployCodeBuildProject.Arn
+
+  S3Policy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-codepipeline-s3"
+      Description: !Sub "Access to ${ProjectName}'s CodePipeline bucket (${AccountType})"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: "CodePipelineBucketsAccess"
+            Action:
+              - s3:GetObject*
+              - s3:PutObject*
+              - s3:PutLifecycleConfiguration
+              - s3:PutBucketVersioning
+              - s3:PutBucketTagging
+              - s3:ListBucket
+            Effect: Allow
+            Resource:
+              - !Join [ '',[ !GetAtt CodePipelineBucket.Arn, '/*' ] ]
+              - !Join [ '',[ !GetAtt CodePipelineBucket.Arn ] ]
+
+  LogsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-logs"
+      Description: !Sub ${ProjectName} event log policy (${AccountType})
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - logs:*
+            Effect: Allow
+            Resource:
+              - !GetAtt CodeBuildLogGroup.Arn
+
+  IamPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-iam"
+      Description: !Sub "Common access to IAM (${AccountType})"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - iam:Create*
+              - iam:Delete*
+              - iam:Get*
+              - iam:PassRole
+              - iam:PutRolePolicy
+              - iam:AttachRolePolicy
+              - iam:UpdateRoleDescription
+              - iam:DetachRolePolicy
+              - iam:List*
+              - iam:AttachGroupPolicy
+              - iam:DetachGroupPolicy
+              - iam:PutGroupPolicy
+              - iam:RemoveRoleFromInstanceProfile
+              - iam:AddRoleToInstanceProfile
+              - iam:UpdateAssumeRolePolicy*
+              - iam:AddUserToGroup
+              - iam:RemoveUserFromGroup
+            Effect: Allow
+            Resource: '*'
+
+  CloudFormationPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-cfn"
+      Description: !Sub "Common access to CloudFormation (${AccountType})"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - cloudformation:*
+            Effect: Allow
+            Resource:
+              - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/infrastructure-cicd-${AccountType}/*
