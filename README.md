@@ -67,3 +67,4 @@ codebuild_build.sh -a artifact -i aws/codebuild/standard:6.0 -c -p <AWS Profile 
 # Cleanup AWS account
 We need remove some resources manually after removing CloudFormation stacks
 - *S3 buckets*
+- *CloudWatch logs*
