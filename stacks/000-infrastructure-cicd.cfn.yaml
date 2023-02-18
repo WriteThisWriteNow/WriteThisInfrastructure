@@ -92,7 +92,7 @@ Resources:
       TargetPipelineVersion: !GetAtt CodePipeline.Version
 
 
-  ########  CODEBUILD  ########
+########  CODEBUILD  ########
   InfrastructureDeployCodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -245,15 +245,12 @@ Resources:
             Resource:
               - !Join [ '',[ !GetAtt CodePipelineBucket.Arn, '/*' ] ]
               - !Join [ '',[ !GetAtt CodePipelineBucket.Arn ] ]
-          - Sid: "CreateApplicationBucketsAccess"
+          - Sid: "ApplicationBucketsAccess"
             Action:
-              - s3:CreateBucket
-              - s3:PutBucketTagging
-              - s3:SetBucketEncryption
+              - s3:*
             Effect: Allow
             Resource:
               - !Sub "arn:aws:s3:::${AccountType}-writings-${AWS::AccountId}"
-              - !Sub "arn:aws:s3:::${AccountType}-writings-${AWS::AccountId}/*"
 
   SecretsPolicy:
     Type: AWS::IAM::ManagedPolicy
