@@ -178,6 +178,7 @@ Resources:
         - !Ref CloudFormationPolicy
         - !Ref SecretsPolicy
         - !Ref CodePipelinePolicy
+        - !Ref RDSPolicy
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -270,7 +271,25 @@ Resources:
             Action:
               - secretsmanager:GetSecretValue
             Effect: Allow
-            Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github/access/token*"
+            Resource:
+              - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github/access/token*"
+              - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AccountType}/db/appdb*"
+
+  RDSPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-rds"
+      Description: !Sub "Access to ${ProjectName}'s creating rds database (${AccountType})"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: "RDSAccess"
+            Action:
+              - rds:CreateDBInstance
+              - rds:DescribeDBInstances
+            Effect: Allow
+            Resource:
+              - !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${AccountType}-appdb"
 
   CodePipelinePolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -345,3 +364,4 @@ Resources:
             Resource:
               - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/infrastructure-cicd-${AccountType}/*
               - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/s3buckets-${AccountType}/*
+              - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/rds-${AccountType}/*

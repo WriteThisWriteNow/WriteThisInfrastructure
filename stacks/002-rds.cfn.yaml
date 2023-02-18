@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Stack to create RDS databases for application
+
+Parameters:
+  AccountType:
+    Description: The type of the account.
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      StorageType: gp2
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      DBInstanceIdentifier: !Sub ${AccountType}-appdb
+      DBName: appdb
+      Engine: postgres
+      EngineVersion: '14.6'
+      MasterUsername: !Sub "{{resolve:secretsmanager:${AccountType}/db/appdb:SecretString:username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${AccountType}/db/appdb:SecretString:password}}"
+      Port: '5432'
