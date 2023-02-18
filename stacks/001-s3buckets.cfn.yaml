@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Stack to create application s3 buckets
+
+Parameters:
+  AccountType:
+    Description: The type of the account.
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+########  S3  ########
+  WritingsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub ${AccountType}-writings-${AWS::AccountId}
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: Remove incomplete multipart uploads
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            Status: Enabled
+      Tags:
+        - Key: env
+          Value: !Ref AccountType
