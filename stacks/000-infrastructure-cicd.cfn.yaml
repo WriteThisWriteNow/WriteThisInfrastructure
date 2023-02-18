@@ -228,7 +228,7 @@ Resources:
   S3Policy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      ManagedPolicyName: !Sub "${AccountType}-infrastructure-codepipeline-s3"
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-s3"
       Description: !Sub "Access to ${ProjectName}'s CodePipeline bucket (${AccountType})"
       PolicyDocument:
         Version: 2012-10-17
@@ -247,15 +247,21 @@ Resources:
               - !Join [ '',[ !GetAtt CodePipelineBucket.Arn ] ]
           - Sid: "ApplicationBucketsAccess"
             Action:
-              - s3:*
+              - s3:CreateBucket
+              - s3:PutBucketTagging
+              - s3:PutEncryptionConfiguration
+              - s3:PutLifecycleConfiguration
+              - s3:PutBucketVersioning
+              - s3:PutBucketPublicAccessBlock
             Effect: Allow
             Resource:
               - !Sub "arn:aws:s3:::${AccountType}-writings-${AWS::AccountId}"
+              - !Sub "arn:aws:s3:::${AccountType}-media-${AWS::AccountId}"
 
   SecretsPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      ManagedPolicyName: !Sub "${AccountType}-infrastructure-codepipeline-secrets"
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-secrets"
       Description: !Sub "Access to ${ProjectName}'s secrets manager (${AccountType})"
       PolicyDocument:
         Version: 2012-10-17
