@@ -34,7 +34,7 @@ Resources:
       ArtifactStore:
         Type: S3
         Location: !Ref CodePipelineBucket
-      RestartExecutionOnUpdate: true
+      RestartExecutionOnUpdate: false
       RoleArn: !GetAtt DeployCodePipelineRole.Arn
       Stages:
         - Name: Source
@@ -54,7 +54,7 @@ Resources:
                 Branch: !FindInMap [ BranchMap, !Ref AccountType, Branch ]
                 Repo: !Sub ${RepositoryName}
                 OAuthToken: "{{resolve:secretsmanager:github/access/token:SecretString}}"
-                PollForSourceChanges: true
+                PollForSourceChanges: false
               RunOrder: 1
         - Name: Deploy
           Actions:
@@ -73,7 +73,26 @@ Resources:
         - Key: AccountType
           Value: !Ref AccountType
 
-########  CODEBUILD  ########
+  KnovioInfrastructureGithubWebhook:
+    Type: AWS::CodePipeline::Webhook
+    Properties:
+      Name: !Sub ${ProjectName}-github-webhook-${AccountType}
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: "{{resolve:secretsmanager:github/access/token:SecretString}}"
+      RegisterWithThirdParty: True
+      Filters:
+        - JsonPath: "$.ref"
+          MatchEquals:
+            Fn::Sub:
+              - "refs/heads/${BranchName}"
+              - BranchName: !FindInMap [ BranchMap, !Ref AccountType, Branch ]
+      TargetPipeline: !Ref CodePipeline
+      TargetAction: Source
+      TargetPipelineVersion: !GetAtt CodePipeline.Version
+
+
+  ########  CODEBUILD  ########
   InfrastructureDeployCodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -126,14 +145,10 @@ Resources:
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
             Status: Enabled
-          - Id: Remove old packages
+          - Id: Remove old infrastructure packages
             ExpirationInDays: 5
             Status: Enabled
-            Prefix: !Sub codepipeline/${ProjectName}
-          - Id: !Sub Remove old ${ProjectName} deploy packages
-            ExpirationInDays: 5
-            Status: Enabled
-            Prefix: !Sub codebuild/${ProjectName}/
+            Prefix: !Sub "${AccountType}-infrastructure*"
           - Id: Remove old versions
             NoncurrentVersionExpirationInDays: 5
             Status: Enabled
@@ -161,6 +176,8 @@ Resources:
         - !Ref LogsPolicy
         - !Ref IamPolicy
         - !Ref CloudFormationPolicy
+        - !Ref SecretsPolicy
+        - !Ref CodePipelinePolicy
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -228,6 +245,45 @@ Resources:
             Resource:
               - !Join [ '',[ !GetAtt CodePipelineBucket.Arn, '/*' ] ]
               - !Join [ '',[ !GetAtt CodePipelineBucket.Arn ] ]
+          - Sid: "CreateApplicationBucketsAccess"
+            Action:
+              - s3:CreateBucket
+              - s3:PutBucketTagging
+              - s3:SetBucketEncryption
+            Effect: Allow
+            Resource:
+              - !Sub "arn:aws:s3:::${AccountType}-writings-${AWS::AccountId}"
+              - !Sub "arn:aws:s3:::${AccountType}-writings-${AWS::AccountId}/*"
+
+  SecretsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-codepipeline-secrets"
+      Description: !Sub "Access to ${ProjectName}'s secrets manager (${AccountType})"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: "SecretsManagerAccess"
+            Action:
+              - secretsmanager:GetSecretValue
+            Effect: Allow
+            Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:github/access/token*"
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AccountType}-infrastructure-codepipeline"
+      Description: !Sub "Access to ${ProjectName}'s CodePipeline (${AccountType})"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: "CodePipelineAccess"
+            Action:
+              - codepipeline:UpdatePipeline
+            Effect: Allow
+            Resource:
+              - !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AccountType}-infrastructure-deploy"
+              - !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AccountType}-infrastructure-deploy/*"
 
   LogsPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -285,3 +341,4 @@ Resources:
             Effect: Allow
             Resource:
               - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/infrastructure-cicd-${AccountType}/*
+              - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/s3buckets-${AccountType}/*
